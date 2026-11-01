@@ -20,7 +20,8 @@ class WordRepository(context: Context) {
                             id = item.getString("id"),
                             english = item.getString("english"),
                             chinese = item.getString("chinese"),
-                            learned = item.optBoolean("learned", false)
+                            learned = item.optBoolean("learned", false),
+                            needsReview = item.optBoolean("needsReview", false)
                         )
                     )
                 }
@@ -37,6 +38,7 @@ class WordRepository(context: Context) {
                     .put("english", word.english)
                     .put("chinese", word.chinese)
                     .put("learned", word.learned)
+                    .put("needsReview", word.needsReview)
             )
         }
         preferences.edit().putString(WORDS_KEY, array.toString()).apply()

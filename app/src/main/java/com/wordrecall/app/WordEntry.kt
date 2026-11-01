@@ -4,5 +4,6 @@ data class WordEntry(
     val id: String,
     val english: String,
     val chinese: String,
-    val learned: Boolean = false
+    val learned: Boolean = false,
+    val needsReview: Boolean = false
 )

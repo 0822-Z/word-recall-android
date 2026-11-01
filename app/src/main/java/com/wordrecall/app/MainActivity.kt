@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -91,7 +92,8 @@ private enum class AppTab(val label: String) {
 
 private enum class BookFilter {
     ALL,
-    LEARNED
+    LEARNED,
+    NEEDS_WORK
 }
 
 @Composable
@@ -178,7 +180,25 @@ private fun WordRecallApp(repository: WordRepository) {
                         onMarkLearned = { id ->
                             updateWords(
                                 words.map {
-                                    if (it.id == id) it.copy(learned = true) else it
+                                    if (it.id == id) {
+                                        it.copy(learned = true, needsReview = false)
+                                    } else {
+                                        it
+                                    }
+                                }
+                            )
+                        },
+                        onNoImpression = { id ->
+                            updateWords(
+                                words.map {
+                                    if (it.id == id) it.copy(needsReview = true) else it
+                                }
+                            )
+                        },
+                        onHasImpression = { id ->
+                            updateWords(
+                                words.map {
+                                    if (it.id == id) it.copy(needsReview = false) else it
                                 }
                             )
                         },
@@ -191,7 +211,15 @@ private fun WordRecallApp(repository: WordRepository) {
                         onToggleLearned = { id ->
                             updateWords(
                                 words.map {
-                                    if (it.id == id) it.copy(learned = !it.learned) else it
+                                    if (it.id == id) {
+                                        if (it.learned) {
+                                            it.copy(learned = false)
+                                        } else {
+                                            it.copy(learned = true, needsReview = false)
+                                        }
+                                    } else {
+                                        it
+                                    }
                                 }
                             )
                         },
@@ -227,7 +255,7 @@ private fun AppHeader(wordCount: Int, unmarkedCount: Int) {
         Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "词忆",
+                text = "词兮",
                 style = MaterialTheme.typography.headlineLarge,
                 color = Ink
             )
@@ -467,17 +495,18 @@ private fun StatsCard(
 private fun RecallScreen(
     words: List<WordEntry>,
     onMarkLearned: (String) -> Unit,
+    onNoImpression: (String) -> Unit,
+    onHasImpression: (String) -> Unit,
     onOpenImport: () -> Unit,
     onOpenBook: () -> Unit
 ) {
     val unmarkedWords = words.filter { !it.learned }
-    val wordSetKey = unmarkedWords.joinToString("|") { "${it.id}:${it.english}:${it.chinese}" }
-    var shuffleRound by rememberSaveable { mutableIntStateOf(0) }
-    val shuffledWords = remember(wordSetKey, shuffleRound) {
-        unmarkedWords.shuffled()
-    }
-    var currentIndex by rememberSaveable(wordSetKey, shuffleRound) {
-        mutableIntStateOf(0)
+    val sampleSizes = listOf(10, 15, 20, 30, 50)
+    var selectedCount by rememberSaveable { mutableIntStateOf(10) }
+    var sessionIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var currentIndex by rememberSaveable { mutableIntStateOf(0) }
+    val sessionWords = sessionIds.mapNotNull { id ->
+        words.firstOrNull { it.id == id }
     }
 
     when {
@@ -495,25 +524,38 @@ private fun RecallScreen(
             onAction = onOpenBook
         )
 
-        currentIndex >= shuffledWords.size -> RecallEmptyState(
+        sessionIds.isEmpty() -> RecallSetup(
+            availableCount = unmarkedWords.size,
+            selectedCount = selectedCount,
+            sampleSizes = sampleSizes,
+            onSelected = { selectedCount = it },
+            onStart = {
+                sessionIds = unmarkedWords
+                    .shuffled()
+                    .take(selectedCount)
+                    .map { it.id }
+                currentIndex = 0
+            }
+        )
+
+        currentIndex >= sessionWords.size -> RecallEmptyState(
             title = "这一轮已经完成",
-            detail = "没有评分。你可以重新打乱顺序，再回忆一次尚未标记的单词。",
-            actionLabel = "重新打乱本轮",
+            detail = "这一轮共回忆 ${sessionWords.size} 个单词。你可以重新选择数量，再随机抽取一组。",
+            actionLabel = "重新选择数量",
             onAction = {
-                shuffleRound += 1
+                sessionIds = emptyList()
                 currentIndex = 0
             }
         )
 
         else -> {
-            val current = shuffledWords[currentIndex]
-            var answer by rememberSaveable(current.id) { mutableStateOf("") }
-            var submitted by rememberSaveable(current.id) { mutableStateOf(false) }
+            val current = sessionWords[currentIndex]
+            var revealed by rememberSaveable(current.id) { mutableStateOf(false) }
+            var resultLabel by rememberSaveable(current.id) { mutableStateOf("") }
 
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .imePadding()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 18.dp, vertical = 18.dp)
             ) {
@@ -527,7 +569,7 @@ private fun RecallScreen(
                             style = MaterialTheme.typography.headlineLarge
                         )
                         Text(
-                            text = "根据英文写出你记得的汉语意思",
+                            text = "先凭记忆判断，再查看中文释义",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MutedInk
                         )
@@ -537,7 +579,7 @@ private fun RecallScreen(
                         shape = RoundedCornerShape(99.dp)
                     ) {
                         Text(
-                            text = "${currentIndex + 1} / ${shuffledWords.size}",
+                            text = "${currentIndex + 1} / ${sessionWords.size}",
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
                             color = MossDark,
                             fontWeight = FontWeight.Bold,
@@ -578,35 +620,52 @@ private fun RecallScreen(
                 }
                 Spacer(Modifier.height(16.dp))
 
-                OutlinedTextField(
-                    value = answer,
-                    onValueChange = { answer = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("写下汉语意思") },
-                    placeholder = { Text("不用完全一致，写出你想到的意思") },
-                    minLines = 3,
-                    maxLines = 5,
-                    enabled = !submitted,
-                    shape = RoundedCornerShape(17.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-
-                if (!submitted) {
-                    Button(
-                        onClick = { submitted = true },
-                        enabled = answer.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        shape = RoundedCornerShape(16.dp)
+                if (!revealed) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text("提交并查看答案", fontWeight = FontWeight.Bold)
+                        OutlinedButton(
+                            onClick = {
+                                resultLabel = "没印象"
+                                revealed = true
+                                onNoImpression(current.id)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Clay)
+                        ) {
+                            Text("没印象", fontWeight = FontWeight.Bold)
+                        }
+                        Button(
+                            onClick = {
+                                resultLabel = "有印象"
+                                revealed = true
+                                onHasImpression(current.id)
+                            },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(54.dp),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Text("有印象", fontWeight = FontWeight.Bold)
+                        }
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "点击任一选项都会立即显示答案。",
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MutedInk,
+                        textAlign = TextAlign.Center
+                    )
                 } else {
                     AnswerReveal(
                         english = current.english,
                         originalChinese = current.chinese,
-                        userAnswer = answer
+                        resultLabel = resultLabel
                     )
                     Spacer(Modifier.height(12.dp))
                     Button(
@@ -633,7 +692,7 @@ private fun RecallScreen(
                 }
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    text = "本应用只展示你填写的内容和原始答案，不判断对错。",
+                    text = "“有印象”和“没印象”都是你的自主判断，应用不会自动评分。",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MutedInk,
@@ -646,10 +705,128 @@ private fun RecallScreen(
 }
 
 @Composable
+private fun RecallSetup(
+    availableCount: Int,
+    selectedCount: Int,
+    sampleSizes: List<Int>,
+    onSelected: (Int) -> Unit,
+    onStart: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 18.dp, vertical = 20.dp)
+    ) {
+        Text(
+            text = "选择本轮数量",
+            style = MaterialTheme.typography.headlineLarge
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = "从尚未熟记的单词中随机抽取，顺序也会打乱。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MutedInk
+        )
+        Spacer(Modifier.height(20.dp))
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.White)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                Text(
+                    text = "可回忆单词",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MutedInk
+                )
+                Text(
+                    text = "$availableCount 个",
+                    fontSize = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MossDark
+                )
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    text = "本轮数量",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MutedInk
+                )
+                Text(
+                    text = "${minOf(selectedCount, availableCount)} 个",
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Clay
+                )
+                if (selectedCount > availableCount) {
+                    Spacer(Modifier.height(5.dp))
+                    Text(
+                        text = "当前词量不足，将练习全部可用的 $availableCount 个单词。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Clay
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            sampleSizes.forEach { size ->
+                val selected = selectedCount == size
+                if (selected) {
+                    Button(
+                        onClick = { onSelected(size) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        shape = RoundedCornerShape(13.dp)
+                    ) {
+                        Text("$size", fontWeight = FontWeight.Bold)
+                    }
+                } else {
+                    OutlinedButton(
+                        onClick = { onSelected(size) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(46.dp),
+                        contentPadding = PaddingValues(0.dp),
+                        shape = RoundedCornerShape(13.dp)
+                    ) {
+                        Text("$size")
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        Button(
+            onClick = onStart,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
+            shape = RoundedCornerShape(16.dp)
+        ) {
+            Text("开始回忆", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = "开始后，每个词先显示英文。你可以选择“没印象”或“有印象”，两者都会立即显示原始中文释义。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MutedInk
+        )
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
 private fun AnswerReveal(
     english: String,
     originalChinese: String,
-    userAnswer: String
+    resultLabel: String
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -664,13 +841,13 @@ private fun AnswerReveal(
                     modifier = Modifier.weight(1f)
                 )
                 Surface(
-                    color = SoftClay,
+                    color = if (resultLabel == "没印象") SoftClay else PaleMoss,
                     shape = RoundedCornerShape(99.dp)
                 ) {
                     Text(
-                        text = "不评分",
+                        text = resultLabel,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        color = Color(0xFF7D3D1B),
+                        color = if (resultLabel == "没印象") Color(0xFF7D3D1B) else MossDark,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -680,8 +857,6 @@ private fun AnswerReveal(
             AnswerLine("英文", english, Ink)
             Spacer(Modifier.height(12.dp))
             AnswerLine("原始汉语", originalChinese, Moss)
-            Spacer(Modifier.height(12.dp))
-            AnswerLine("你填写的内容", userAnswer.trim(), Clay)
         }
     }
 }
@@ -756,9 +931,11 @@ private fun WordBookScreen(
 ) {
     var filter by rememberSaveable { mutableStateOf(BookFilter.ALL) }
     val learnedCount = words.count { it.learned }
+    val needsReviewCount = words.count { it.needsReview }
     val filteredWords = when (filter) {
         BookFilter.ALL -> words
         BookFilter.LEARNED -> words.filter { it.learned }
+        BookFilter.NEEDS_WORK -> words.filter { it.needsReview }
     }
 
     if (words.isEmpty()) {
@@ -783,12 +960,17 @@ private fun WordBookScreen(
             )
             Spacer(Modifier.height(5.dp))
             Text(
-                text = "查看全部导入内容，也可以随时改变熟记状态。",
+                text = "查看全部内容、熟记单词和需要加强的单词。",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MutedInk
             )
             Spacer(Modifier.height(14.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
                 FilterChip(
                     selected = filter == BookFilter.ALL,
                     onClick = { filter = BookFilter.ALL },
@@ -802,6 +984,15 @@ private fun WordBookScreen(
                     selected = filter == BookFilter.LEARNED,
                     onClick = { filter = BookFilter.LEARNED },
                     label = { Text("已熟记 $learnedCount") },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = SoftClay,
+                        selectedLabelColor = Color(0xFF7D3D1B)
+                    )
+                )
+                FilterChip(
+                    selected = filter == BookFilter.NEEDS_WORK,
+                    onClick = { filter = BookFilter.NEEDS_WORK },
+                    label = { Text("需要加强 $needsReviewCount") },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = SoftClay,
                         selectedLabelColor = Color(0xFF7D3D1B)
@@ -823,12 +1014,20 @@ private fun WordBookScreen(
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
                         Text(
-                            text = "还没有标记为熟记的单词",
+                            text = when (filter) {
+                                BookFilter.ALL -> "单词本还是空的"
+                                BookFilter.LEARNED -> "还没有标记为熟记的单词"
+                                BookFilter.NEEDS_WORK -> "“需要加强”列表还是空的"
+                            },
                             style = MaterialTheme.typography.titleMedium
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            text = "在回忆页或全部单词中使用“标记已熟记”。",
+                            text = when (filter) {
+                                BookFilter.ALL -> "先导入一些单词。"
+                                BookFilter.LEARNED -> "在回忆页或全部单词中使用“标记已熟记”。"
+                                BookFilter.NEEDS_WORK -> "回忆时点击“没印象”，单词就会记录到这里。"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MutedInk,
                             textAlign = TextAlign.Center
@@ -876,13 +1075,18 @@ private fun WordCard(
                 }
                 Spacer(Modifier.width(10.dp))
                 Surface(
-                    color = if (word.learned) SoftClay else PaleMoss,
+                    color = if (word.learned || word.needsReview) SoftClay else PaleMoss,
                     shape = RoundedCornerShape(99.dp)
                 ) {
                     Text(
-                        text = if (word.learned) "已熟记" else "回忆中",
+                        text = when {
+                            word.learned && word.needsReview -> "已熟记 · 需要加强"
+                            word.learned -> "已熟记"
+                            word.needsReview -> "需要加强"
+                            else -> "回忆中"
+                        },
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                        color = if (word.learned) Color(0xFF7D3D1B) else MossDark,
+                        color = if (word.learned || word.needsReview) Color(0xFF7D3D1B) else MossDark,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold
                     )
