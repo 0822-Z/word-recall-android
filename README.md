@@ -13,6 +13,20 @@
 - 可取消熟记标记，单词会重新进入乱序回忆。
 - 所有数据保存在手机本地，无需注册或联网。
 
+## 下载安装
+
+可以直接在手机上打开下面的 GitHub Release 页面，下载 `WordRecall-v1.0.0.apk`：
+
+[下载词忆 v1.0.0](https://github.com/0822-Z/word-recall-android/releases/tag/v1.0.0)
+
+如果浏览器提示需要通过外部应用安装，请允许浏览器安装未知来源应用。应用最低支持 Android 8.0。
+
+APK SHA-256：
+
+```text
+4729E3C7EDFC5BEB58F23EFB6E402F186D0D58EC7981408C21572DB1CEE14CB5
+```
+
 ## 在 Android Studio 中运行
 
 1. 使用 Android Studio 打开本目录。
